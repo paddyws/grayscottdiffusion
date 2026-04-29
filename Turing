@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Purple vs Orange Ink — Leopard Spots</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#120817; color:#fff3e7; font-family:system-ui, sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; image-rendering:auto; background:#120817; cursor:crosshair; }
+  .panel {
+    position:fixed; left:14px; top:14px; width:335px; padding:13px 14px;
+    background:rgba(15,8,22,.76); border:1px solid rgba(255,151,41,.28); border-radius:16px;
+    box-shadow:0 12px 34px rgba(0,0,0,.42); backdrop-filter:blur(7px);
+  }
+  h1 { margin:0 0 8px; font-size:16px; }
+  .row { display:grid; grid-template-columns:138px 1fr 45px; gap:8px; align-items:center; margin:8px 0; font-size:12px; }
+  input[type="range"] { width:100%; accent-color:#ff9229; }
+  button { background:linear-gradient(135deg,#7b2dff,#ff8a1f); color:white; border:1px solid rgba(255,255,255,.18); border-radius:10px; padding:8px 10px; margin:5px 5px 0 0; cursor:pointer; }
+  button:hover { filter:brightness(1.12); }
+  .hint { font-size:12px; line-height:1.35; opacity:.83; margin-top:9px; }
+  .stats { position:fixed; right:14px; top:14px; background:rgba(10,5,15,.6); border:1px solid rgba(179,92,255,.25); border-radius:12px; padding:10px 12px; text-align:right; font-size:13px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="panel">
+  <h1>Purple / Orange Leopard Spots</h1>
+  <div class="row"><span>Spot size</span><input id="size" type="range" min="20" max="100" value="58"><b id="sizeV"></b></div>
+  <div class="row"><span>Orange feed</span><input id="feed" type="range" min="20" max="80" value="43"><b id="feedV"></b></div>
+  <div class="row"><span>Purple kill</span><input id="kill" type="range" min="40" max="90" value="62"><b id="killV"></b></div>
+  <div class="row"><span>Contrast</span><input id="contrast" type="range" min="70" max="180" value="125"><b id="contrastV"></b></div>
+  <button id="seed">Re-seed Spots</button><button id="rings">Big Blobs</button><button id="clear">Reset</button>
+  <div class="hint">This is a Gray-Scott reaction-diffusion toy. Orange activates locally, purple spreads wider and suppresses it, which settles into leopard-ish spots. Click/drag to inject orange ink.</div>
+</div>
+<div class="stats" id="stats"></div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H, dpr, gw, gh, N, a, b, na, nb, img, running = true;
+const $ = id => document.getElementById(id);
+const ui = { size:$('size'), feed:$('feed'), kill:$('kill'), contrast:$('contrast') };
+function labels(){
+  sizeV.textContent = ui.size.value;
+  feedV.textContent = (+ui.feed.value/1000).toFixed(3);
+  killV.textContent = (+ui.kill.value/1000).toFixed(3);
+  contrastV.textContent = (+ui.contrast.value/100).toFixed(2);
+}
+Object.values(ui).forEach(x=>x.addEventListener('input',labels)); labels();
+function params(){
+  const s = +ui.size.value/100;
+  return {
+    dA: 1.0,
+    dB: 0.38 + s*.36,
+    feed: +ui.feed.value/1000,
+    kill: +ui.kill.value/1000,
+    contrast: +ui.contrast.value/100
+  };
+}
+function resize(){
+  dpr = Math.min(devicePixelRatio||1,2);
+  W = innerWidth; H = innerHeight;
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  gw = Math.floor(W/3); gh = Math.floor(H/3); N = gw*gh;
+  a = new Float32Array(N); b = new Float32Array(N); na = new Float32Array(N); nb = new Float32Array(N);
+  img = ctx.createImageData(gw, gh);
+  reset();
+}
+addEventListener('resize', resize);
+const idx = (x,y)=>((y+gh)%gh)*gw+((x+gw)%gw);
+function reset(){
+  a.fill(1); b.fill(0);
+  seedRandom(32);
+}
+function seedRandom(count=26){
+  for(let k=0;k<count;k++){
+    const x = Math.floor(Math.random()*gw), y = Math.floor(Math.random()*gh);
+    const r = 4 + Math.random()*12;
+    splat(x,y,r,1);
+  }
+}
+function seedRings(){
+  for(let k=0;k<12;k++) splat(Math.random()*gw, Math.random()*gh, 15+Math.random()*24, .8);
+}
+function splat(cx,cy,r,amount=1){
+  const rr = r*r;
+  for(let y=Math.floor(cy-r); y<=cy+r; y++) for(let x=Math.floor(cx-r); x<=cx+r; x++){
+    const dx=x-cx, dy=y-cy;
+    if(dx*dx+dy*dy<rr){ const i=idx(x,y); b[i]=Math.min(1,b[i]+amount*(.45+Math.random()*.55)); a[i]=Math.max(0,a[i]-.45); }
+  }
+}
+function lap(arr,x,y){
+  return -arr[idx(x,y)] + .2*(arr[idx(x-1,y)]+arr[idx(x+1,y)]+arr[idx(x,y-1)]+arr[idx(x,y+1)]) + .05*(arr[idx(x-1,y-1)]+arr[idx(x+1,y-1)]+arr[idx(x-1,y+1)]+arr[idx(x+1,y+1)]);
+}
+function step(){
+  const p = params();
+  for(let y=0;y<gh;y++) for(let x=0;x<gw;x++){
+    const i=idx(x,y), A=a[i], B=b[i], react=A*B*B;
+    na[i] = Math.min(1, Math.max(0, A + (p.dA*lap(a,x,y) - react + p.feed*(1-A))));
+    nb[i] = Math.min(1, Math.max(0, B + (p.dB*lap(b,x,y) + react - (p.kill+p.feed)*B)));
+  }
+  [a,na]=[na,a]; [b,nb]=[nb,b];
+}
+function draw(){
+  const p = params();
+  const data = img.data;
+  let orangeMass=0;
+  for(let i=0, j=0; i<N; i++, j+=4){
+    let v = Math.max(0, Math.min(1, (b[i]-.16)*p.contrast*3.0));
+    orangeMass += v;
+    // purple base blended into orange spots
+    const edge = Math.max(0, Math.min(1, (v-.15)*1.8));
+    data[j]   = 42  + edge*235;  // R
+    data[j+1] = 12  + edge*102;  // G
+    data[j+2] = 78  - edge*54;   // B
+    data[j+3] = 255;
+  }
+  ctx.imageSmoothingEnabled = true;
+  ctx.putImageData(img,0,0);
+  ctx.drawImage(canvas,0,0,gw,gh,0,0,W,H);
+  stats.innerHTML = `Grid: <b>${gw} × ${gh}</b><br>Orange pressure: <b>${Math.round(orangeMass)}</b><br>Click/drag: <b>paint spots</b>`;
+}
+function loop(){
+  for(let i=0;i<7;i++) step();
+  draw();
+  requestAnimationFrame(loop);
+}
+let painting=false;
+canvas.addEventListener('pointerdown', e=>{ painting=true; paint(e); });
+canvas.addEventListener('pointermove', e=>{ if(painting) paint(e); });
+addEventListener('pointerup',()=>painting=false);
+function paint(e){ splat(e.clientX/3, e.clientY/3, 8+Math.random()*8, 1); }
+$('seed').onclick=()=>seedRandom(45);
+$('rings').onclick=()=>seedRings();
+$('clear').onclick=()=>reset();
+resize(); loop();
+</script>
+</body>
+</html>
